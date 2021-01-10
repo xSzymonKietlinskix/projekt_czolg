@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
 	FILE *f = fopen(argv[1], "r");
 	fread(buffer,1,2048,f);
 	fclose(f);
+    printf("%s\n",buffer);
 	printf("%d\n",supports_full_hd(buffer));	
 	return 0;
 }

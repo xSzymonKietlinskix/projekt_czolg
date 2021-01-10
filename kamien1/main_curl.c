@@ -10,17 +10,21 @@ typedef struct _Memory
     size_t size;
 } Memory;
 
-#define W 12 //wysokosc i szerokosc mapy zeby szybciej zmienic jak cos
-#define S 9
+#define W 20 //wysokosc i szerokosc mapy zeby szybciej zmienic jak cos
+#define S 20
+
+
 
 struct Macierz //obraz swiata w formie macierzy
-{
-    int r;
-    int c;
+{   
+    int xo; //pocztakowe polozenie czolgu na osi x
+    int yo; //pocztakowe polozenie czolgu na osi y
+    char zwrot; //pocztakowy zwrot czolgu
     float tab[W][S];
+    int nastepny; //podloze ktore jest jedno pole przed czolgiem
 };
 
-#define forward "http://edi.iem.pw.edu.pl:30000/worlds/api/v1/worlds/move/qwerty_15"
+#define forward "http://edi.iem.pw.edu.pl:30000/worlds/api/v1/worlds/move/qwerty_15" //zeby szybciej bylo w dalszej czesci projektu
 #define left "http://edi.iem.pw.edu.pl:30000/worlds/api/v1/worlds/rotate/qwerty_15/left"
 #define right "http://edi.iem.pw.edu.pl:30000/worlds/api/v1/worlds/rotate/qwerty_15/right"
 #define explore "http://edi.iem.pw.edu.pl:30000/worlds/api/v1/worlds/explore/qwerty_15"
@@ -56,7 +60,7 @@ static size_t write_callback(void *data, size_t size, size_t nmemb, void *userp)
     return realsize;
 }
 
-char *buffor;
+char *buffor; //buffor bedzie uzywany do przechwytywania chunck response, jest zmienna globalna. W przyszlosci go nie bedzie
 
 char * make_request(char *url, int n)
 {
@@ -73,17 +77,10 @@ curl = curl_easy_init();
         if(n == 1) //zeby nie wypisywac za kazdym razem tylko za pierwszym tej daty serwera itp
         curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
 
-        /* to jest funkcja 'callback', która będzie wywołana przez curl gdy odczyta on kawałek danych
-       ta funkcja musi mieć wywołanie zgodne z wymaganiami, które możesz sprawdzić tutaj:
-       https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html */
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 
-        /* to jest adress struktury, który będzie przekazywany do naszej funkcji 'callback',
-       do tej struktury nasz funkcja 'callback' będzie dopisywać wynik */
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
 
-        /* Wykonaj zapytanie 'synchronicznie', to znaczy następna linijka kodu nie wykona się
-       dopóki nie nadejdzie odpowiedź z serwera. */
         res = curl_easy_perform(curl);
 
         /* Sprawdzamy czy wystapił jakis błąd? */
@@ -91,18 +88,18 @@ curl = curl_easy_init();
             fprintf(stderr, "Błąd! curl_easy_perform() niepowodzenie: %s\n", curl_easy_strerror(res));
         else
         {
-            printf("%s \n", chunk.response);
+            //printf("%s \n", chunk.response); //printf jest wylaczony bo denerwowal w konosli przy robieniu mapy
             buffor = NULL;
             buffor = chunk.response;
         }
         
-        /* zawsze po sobie sprzątaj */
-        free(chunk.response);
+        /* zawsze po sobie sprzątaj */ //chwilowo tego nie zwalniam
+        //free(chunk.response);
         curl_easy_cleanup(curl);
     }
 }
 
-int check_info (int n) {
+int check_info (int n) { //poniższe funkcje wykonoją make request dla odpowiedniej czynności
     char *token = info;
     make_request(token,n);
     return 0;
@@ -132,27 +129,209 @@ int lets_explore(int n) {
     return 0;
 }
 
-void wypisz(struct Macierz m)
+struct Macierz wczytaj_poczatek() //funkcja wczytujaca macierz z początkowym połozeniem, na razie nie odgrywa istonej roli, lecz gdy bede minimalizowac liczbe krokow moze sie przydac
 {
-    int i,j;
-    printf("[ ");
-    for(i = 0; i < m.r; i++)
+    struct Macierz M; 
+    for(int i = 0; i < W; i++) //zerowanie macierzy co by krzaków nie było
+        for(int j = 0; j < S; j++)
+            M.tab[i][j]=0;
+    
+    const cJSON *dana = NULL; //trzy zmienne pomocnicze do przechowywania danych
+    const cJSON *dane = NULL;
+    const cJSON *status = NULL;
+
+    int i = 0; //zmienna pomocnicza przyda się do czytania Json-a
+
+    check_info(0); //robi request o info poczatkowe
+
+    char * const monitor = buffor; //wczytuje Json file z make request
+    cJSON *poczatek_json = cJSON_Parse(monitor);
+    if (poczatek_json == NULL) //sprawdza czy pusty nie jest
     {
-        for(j = 0; j < m.c; j++)
-        printf("%5.1f", m.tab[i][j]);
-        if (i < m.r-1)
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL)
+        {
+            fprintf(stderr, "Error before: %s\n", error_ptr);
+        }
+        goto end;
+    }
+
+    status = cJSON_GetObjectItemCaseSensitive(poczatek_json, "status");
+    if (cJSON_IsString(status) && (status->valuestring != NULL)) //w tym wypadku sluzy jak sprawdzenie poprawnosci polczenia
+    {
+        printf("Checking if exist \"%s\"\n", status->valuestring);
+    }
+
+    dane = cJSON_GetObjectItemCaseSensitive(poczatek_json, "payload");
+    
+    cJSON_ArrayForEach(dana, dane)
+    {
+        if (!cJSON_IsNumber(dana)) //sprawdzam czy dana nie jest numerem zeby nie zrobic segmentation fault przy uzywaniu jakis stringow
+        {
+            if(strcmp (dana->valuestring, "grass") == 0) {
+            //printf("typ podłoża to trawa \n");
+            //M.tab[M.xo][M.yo] = 1; //na razie nie jest to uzywane
+             }
+            else if(strcmp (dana->valuestring, "sand") == 0) {
+            //M.tab[M.xo][M.yo] = 2; 
+            //printf("typ podłoża to piasek \n");
+            }
+            else if(strcmp (dana->valuestring, "S") == 0)
+            M.zwrot = 'S';
+            else if(strcmp (dana->valuestring, "W") == 0)
+            M.zwrot = 'W';
+            else if(strcmp (dana->valuestring, "E") == 0)
+            M.zwrot = 'E';
+            else if(strcmp (dana->valuestring, "N") == 0)
+            M.zwrot = 'N';
+        }
+        else
+        {
+            if(i == 1){
+            M.xo = dana->valuedouble; 
+            //printf("to jest położenie x %f \n", dana->valuedouble);
+            }
+            else if(i == 2){
+            M.yo = dana->valuedouble;
+            //printf("to jest położenie y %f \n", dana->valuedouble);
+            }
+        }
+        i++;
+        }
+    
+end:
+    cJSON_Delete(poczatek_json);
+    buffor = NULL;
+    free(buffor);
+    return M;
+}
+
+struct Macierz pierwszy_bot() //odpowiada za czytanie JSON-a z komendy explore i zapisywanie podloza do macierzy
+{   
+    struct Macierz M = wczytaj_poczatek(); //wczytuje polozenie pocztakowe
+   
+    const cJSON *payload = NULL; //zmienne pomocnicze do przechowywania danych
+    const cJSON *list = NULL;;
+    const cJSON *type = NULL;
+    lets_explore(0); //wlacza ekspoloracje
+    char * const monitor = buffor; //wczytuje Json file z make request
+    cJSON *explore_json = cJSON_Parse(monitor);
+    if (explore_json == NULL) //sprawdza istnienie Jsona
+    {
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL)
+        {
+            fprintf(stderr, "Error before: %s\n", error_ptr);
+        }
+        goto end;
+    }
+
+    payload = cJSON_GetObjectItemCaseSensitive(explore_json, "payload"); //pozyskuje koljene informacje
+    list = cJSON_GetObjectItemCaseSensitive(payload, "list");
+
+    int i = 0; //3 zmienne pomocnicze
+    int a = 0;
+    int b = 0;
+    cJSON_ArrayForEach(type, list)
+    {
+        cJSON *x = cJSON_GetObjectItemCaseSensitive(type, "x");
+        cJSON *y = cJSON_GetObjectItemCaseSensitive(type, "y");
+        cJSON *field = cJSON_GetObjectItemCaseSensitive(type, "type");
+
+        b = x->valueint; //przechywtuje na chwile biezace polozenie czolgu
+        a = y->valueint;
+
+        if(strcmp(field->valuestring, "grass") == 0){
+            M.tab[a][b] = 1;
+            if(i == 1) //chodzi o to zeby tylko gdy mowimy o polu centralnie przed czolgiem to dzialalo
+            M.nastepny = 1;
+        }
+        else if(strcmp(field->valuestring, "sand") == 0){
+            M.tab[a][b] = 2;
+            if(i == 1)
+            M.nastepny = 2;
+        }
+        else if(strcmp(field->valuestring, "wall") == 0){
+            M.tab[a][b] = 8;
+            if(i == 1)
+            M.nastepny = 8;
+        }
+        a = 0;
+        b = 0;
+        i++;
+    }
+    end:
+    cJSON_Delete(explore_json);
+    free(buffor);
+    return M;
+}
+
+struct Macierz drugi_bot() //odpowiada za poruszanie sie czolgu
+{
+    struct Macierz M = pierwszy_bot(); //wczytuje macierz z pierwszego bota
+    struct Macierz B; //macierz pomocnicza
+    B.nastepny = M.nastepny;
+    for(int i = 0; i < W; i++) //wyzerowoana zeby bledow nie bylo
+        for(int j = 0; j < S; j++)
+            B.tab[i][j]=0;
+    int i = 0; //licnzik powtorzen
+    while(i < 40){ //na razie dobierane na oko bo nie ma jeszczse zadnego mechanizmu minimalizujacego te kroki
+    move(0); //krok do przodu
+    struct Macierz M = pierwszy_bot();
+    if(M.nastepny == 8) //jezeli przed nami sciana to obraca w lewo. Tutaj na pewno tworzą się niepotrzbne kroki. DO poprawy
+    turn_left(0);
+    for(int i = 0; i < W; i++)
+        for(int j = 0; j < S; j++) //mialem problem z zerowaniem sie macierzy dltaego przepisuje macierz M do B pomiajajc puste pola
+            if(M.tab[i][j] != 0)
+                B.tab[i][j] = M.tab[i][j];
+    M.zwrot = B.zwrot;
+    M.nastepny = B.nastepny; // na wszeli wypadek przenosze wszytskie info z jedenj do drugiej. Moze sie kiedys przyda
+    M.xo = B.xo;
+    M.yo = B.yo;
+    i++;
+    }
+    return B;
+}
+    
+
+
+
+void wypisz(struct Macierz m) //wypisuje macierz
+{
+   struct Macierz B; //byl problem z odbiciem lustrzanym stąd druga macierz naprawcza
+   for(int i = 0; i < W; i++)
+    {
+        for(int j = 0; j < S; j++){
+        m.tab[i][j] = B.tab[W - 1 - i][S - 1 - j];
+        }
+    }
+    int i,j;
+    //printf("["); //jakies tam wizulane kwestie to nie teraz
+    for(i = 0; i < W; i++)
+    {
+        for(j = 0; j < S; j++){
+        if(B.tab[W - 1 - i][j] != 0) //nie wypisuje 0 bo nieczytlnie wtedy jest
+        printf("%5.0f", B.tab[W - 1 - i][j]);
+        }
+        if (i < W-1)
         printf("\n");
     }
-    printf(" ]\n");
+    printf("\n");
 }
 
 int main(int argc, char **argv)
 {
     int n; //zmienna pomocnicza do wypisywania lub nie info o polaczeniu
+    if (argv[1] == NULL) {
+        //wypisz(wczytaj_poczatek());
+        //wypisz(pierwszy_bot());
+        wypisz(drugi_bot()); //na kamien milowy 1. Poprawne dzialnie fukncji po wpisaniu ./a.out i to tyle
+    }
+    else {
     for (int i = 1; argv[i] != NULL; i++)
     {
         if(i == 1)
-            n = 1;
+            n = 0;
         else
             n = 0;
         if( strcmp (argv[i], "M") == 0)
@@ -165,8 +344,7 @@ int main(int argc, char **argv)
             lets_explore(n);
         else if( strcmp (argv[i], "I") == 0)
             check_info(n);
-    }
+    }}
     
-    printf("to jest test %s \n",buffor);
     return 0;
 }
